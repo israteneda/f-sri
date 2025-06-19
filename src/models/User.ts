@@ -1,13 +1,15 @@
-import { Schema, model, Document } from 'mongoose';
+import { User, Prisma } from '@prisma/client';
 
-export interface IUser extends Document {
-  email: string;
-  password: string;
-}
+// Export the Prisma generated types
+export type IUser = User;
+export type CreateUserInput = Prisma.UserCreateInput;
+export type UpdateUserInput = Prisma.UserUpdateInput;
+export type UserWithRelations = Prisma.UserGetPayload<{
+  include: {
+    issuingCompanies: true;
+  };
+}>;
 
-const userSchema = new Schema<IUser>({
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-});
-
-export default model<IUser>('User', userSchema);
+// Export the model types for backwards compatibility
+export { User };
+export default User;

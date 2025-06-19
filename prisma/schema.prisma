@@ -1,0 +1,164 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  issuingCompanies IssuingCompany[]
+
+  @@map("users")
+}
+
+model IdentificationType {
+  id          Int    @id @default(autoincrement())
+  codigo      String @unique
+  descripcion String
+
+  // Relations
+  clients Client[]
+
+  @@map("identification_types")
+}
+
+model IssuingCompany {
+  id                         Int     @id @default(autoincrement())
+  userId                     Int     @map("user_id")
+  ruc                        String  @unique
+  razonSocial                String  @map("razon_social")
+  nombreComercial            String  @map("nombre_comercial")
+  direccion                  String?
+  direccionMatriz            String? @map("direccion_matriz")
+  direccionEstablecimiento   String? @map("direccion_establecimiento")
+  telefono                   String?
+  email                      String?
+  codigoEstablecimiento      String  @default("001") @map("codigo_establecimiento")
+  puntoEmision               String  @default("001") @map("punto_emision")
+  tipoAmbiente               Int     @default(1) @map("tipo_ambiente") // 1 = Pruebas, 2 = Producción
+  tipoEmision                Int     @default(1) @map("tipo_emision") // 1 = Normal
+  obligadoContabilidad       Boolean @default(false) @map("obligado_contabilidad")
+  contribuyenteEspecial      String? @map("contribuyente_especial")
+  emailNotificacion          String? @map("email_notificacion")
+  certificate                String? // Base64 encoded certificate
+  certificatePassword        String? @map("certificate_password")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+
+  @@index([ruc])
+  @@index([userId])
+  @@map("issuing_companies")
+}
+
+model Client {
+  id                     Int    @id @default(autoincrement())
+  identificationTypeId   Int    @map("identification_type_id")
+  identificacion         String @unique
+  razonSocial            String @map("razon_social")
+  direccion              String?
+  email                  String?
+  telefono               String?
+
+  // Relations
+  identificationType IdentificationType @relation(fields: [identificationTypeId], references: [id])
+  invoices           Invoice[]
+
+  @@map("clients")
+}
+
+model Product {
+  id                    Int     @id @default(autoincrement())
+  codigo                String  @unique
+  descripcion           String
+  precioUnitario        Decimal @map("precio_unitario") @db.Decimal(10, 2)
+  tieneIva              Boolean @map("tiene_iva")
+  descripcionAdicional  String? @map("descripcion_adicional")
+
+  // Relations
+  invoiceDetails InvoiceDetail[]
+
+  @@map("products")
+}
+
+model Invoice {
+  id                    Int       @id @default(autoincrement())
+  issuingCompanyId      Int       @map("issuing_company_id")
+  clientId              Int       @map("client_id")
+  fechaEmision          DateTime  @map("fecha_emision")
+  claveAcceso           String    @unique @map("clave_acceso")
+  secuencial            String
+  estado                String
+  totalSinImpuestos     Decimal   @map("total_sin_impuestos") @db.Decimal(10, 2)
+  totalIva              Decimal   @map("total_iva") @db.Decimal(10, 2)
+  totalConImpuestos     Decimal   @map("total_con_impuestos") @db.Decimal(10, 2)
+  xml                   String?
+  xmlFirmado            String?   @map("xml_firmado")
+  ridePdf               Bytes?    @map("ride_pdf")
+  autorizacionNumero    String?   @map("autorizacion_numero")
+  fechaAutorizacion     DateTime? @map("fecha_autorizacion")
+  sriEstado             String?   @map("sri_estado")
+  sriMensajes           Json?     @map("sri_mensajes") // JSON field for flexibility
+  sriFechaEnvio         DateTime? @map("sri_fecha_envio")
+  sriFechaRespuesta     DateTime? @map("sri_fecha_respuesta")
+  datosOriginales       Json?     @map("datos_originales") // JSON field for original request data
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  issuingCompany IssuingCompany  @relation(fields: [issuingCompanyId], references: [id])
+  client         Client          @relation(fields: [clientId], references: [id])
+  details        InvoiceDetail[]
+  pdfs           InvoicePDF[]
+
+  @@index([claveAcceso])
+  @@index([issuingCompanyId])
+  @@index([clientId])
+  @@index([fechaEmision])
+  @@map("invoices")
+}
+
+model InvoiceDetail {
+  id             Int     @id @default(autoincrement())
+  invoiceId      Int     @map("invoice_id")
+  productId      Int     @map("product_id")
+  cantidad       Decimal @db.Decimal(10, 3)
+  precioUnitario Decimal @map("precio_unitario") @db.Decimal(10, 2)
+  subtotal       Decimal @db.Decimal(10, 2)
+  valorIva       Decimal @map("valor_iva") @db.Decimal(10, 2)
+
+  // Relations
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("invoice_details")
+}
+
+model InvoicePDF {
+  id              Int      @id @default(autoincrement())
+  invoiceId       Int      @map("invoice_id")
+  filename        String
+  pdfData         Bytes    @map("pdf_data")
+  contentType     String   @default("application/pdf") @map("content_type")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Relations
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_pdfs")
+}

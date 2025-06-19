@@ -1,21 +1,16 @@
-import { Schema, model, Document, Types } from 'mongoose';
+import { InvoiceDetail, Prisma } from '@prisma/client';
 
-export interface IInvoiceDetail extends Document {
-  factura_id: Types.ObjectId;
-  producto_id: Types.ObjectId;
-  cantidad: number;
-  precio_unitario: number;
-  subtotal: number;
-  valor_iva: number;
-}
+// Export the Prisma generated types
+export type IInvoiceDetail = InvoiceDetail;
+export type CreateInvoiceDetailInput = Prisma.InvoiceDetailCreateInput;
+export type UpdateInvoiceDetailInput = Prisma.InvoiceDetailUpdateInput;
+export type InvoiceDetailWithRelations = Prisma.InvoiceDetailGetPayload<{
+  include: {
+    invoice: true;
+    product: true;
+  };
+}>;
 
-const schema = new Schema<IInvoiceDetail>({
-  factura_id: { type: Schema.Types.ObjectId, ref: 'Invoice', required: true },
-  producto_id: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
-  cantidad: { type: Number, required: true },
-  precio_unitario: { type: Number, required: true },
-  subtotal: { type: Number, required: true },
-  valor_iva: { type: Number, required: true },
-});
-
-export default model<IInvoiceDetail>('InvoiceDetail', schema);
+// Export the model types for backwards compatibility
+export { InvoiceDetail };
+export default InvoiceDetail;

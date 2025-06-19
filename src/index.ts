@@ -1,8 +1,8 @@
 import express from 'express';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import { getCorsConfig } from './config/cors.config';
+import prisma from './config/database';
 import swaggerSpec from './swagger';
 import authRoutes from './routes/auth';
 import corsTestRoutes from './routes/cors-test';
@@ -76,13 +76,25 @@ app.get('/docs', (_req, res) => {
 });
 
 // Health check endpoint
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    cors: 'enabled',
-    environment: process.env.NODE_ENV || 'development',
-  });
+app.get('/health', async (_req, res: express.Response) => {
+  try {
+    // Test database connection
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      cors: 'enabled',
+      environment: process.env.NODE_ENV || 'development',
+      database: 'connected',
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'ERROR',
+      timestamp: new Date().toISOString(),
+      database: 'disconnected',
+      error: process.env.NODE_ENV === 'development' ? error : 'Database connection failed',
+    });
+  }
 });
 
 // Authentication middleware for protected routes
@@ -109,15 +121,37 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 
 const PORT = process.env.PORT || 3000;
 
-mongoose
-  .connect(process.env.MONGO_URI || '')
-  .then(() => {
+// Start server with database connection test
+async function startServer() {
+  try {
+    // Test database connection
+    await prisma.$connect();
+    console.log('🗄️ Database connected successfully');
+    
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📄 API Docs: http://localhost:${PORT}/docs`);
+      console.log('💾 Database: PostgreSQL with Prisma');
     });
-  })
-  .catch((err) => {
-    console.error('❌ Database connection error', err);
-  });
+  } catch (error) {
+    console.error('❌ Database connection error:', error);
+    console.error('💡 Make sure PostgreSQL is running and DATABASE_URL is configured');
+    process.exit(1);
+  }
+}
+
+startServer();
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
+});

@@ -1,19 +1,15 @@
-import { Schema, model, Document } from 'mongoose';
+import { Product, Prisma } from '@prisma/client';
 
-export interface IProduct extends Document {
-  codigo: string;
-  descripcion: string;
-  precio_unitario: number;
-  tiene_iva: boolean;
-  descripcion_adicional?: string;
-}
+// Export the Prisma generated types
+export type IProduct = Product;
+export type CreateProductInput = Prisma.ProductCreateInput;
+export type UpdateProductInput = Prisma.ProductUpdateInput;
+export type ProductWithRelations = Prisma.ProductGetPayload<{
+  include: {
+    invoiceDetails: true;
+  };
+}>;
 
-const schema = new Schema<IProduct>({
-  codigo: { type: String, required: true },
-  descripcion: { type: String, required: true },
-  precio_unitario: { type: Number, required: true },
-  tiene_iva: { type: Boolean, required: true },
-  descripcion_adicional: { type: String },
-});
-
-export default model<IProduct>('Product', schema);
+// Export the model types for backwards compatibility
+export { Product };
+export default Product;

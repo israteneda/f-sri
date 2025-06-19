@@ -1,13 +1,15 @@
-import { Schema, model, Document } from 'mongoose';
+import { IdentificationType, Prisma } from '@prisma/client';
 
-export interface IIdentificationType extends Document {
-  codigo: string;
-  descripcion: string;
-}
+// Export the Prisma generated types
+export type IIdentificationType = IdentificationType;
+export type CreateIdentificationTypeInput = Prisma.IdentificationTypeCreateInput;
+export type UpdateIdentificationTypeInput = Prisma.IdentificationTypeUpdateInput;
+export type IdentificationTypeWithRelations = Prisma.IdentificationTypeGetPayload<{
+  include: {
+    clients: true;
+  };
+}>;
 
-const schema = new Schema<IIdentificationType>({
-  codigo: { type: String, required: true },
-  descripcion: { type: String, required: true },
-});
-
-export default model<IIdentificationType>('IdentificationType', schema);
+// Export the model types for backwards compatibility
+export { IdentificationType };
+export default IdentificationType;

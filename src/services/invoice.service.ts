@@ -4,13 +4,13 @@ import { generarXMLFactura } from '../utils/xml.utils';
 import { firmarXML } from '../utils/firma.utils';
 import { enviarComprobanteSRI, RespuestaSRI } from '../utils/sri.utils';
 import { generateInvoicePDF, savePDFToFile } from '../utils/pdf.utils';
-import Invoice from '../models/Invoice';
-import InvoiceDetail from '../models/InvoiceDetail';
-import InvoicePDF from '../models/InvoicePDF';
-import IdentificationType, { IIdentificationType } from '../models/IdentificationType';
-import IssuingCompany, { IIssuingCompany } from '../models/IssuingCompany';
-import Client, { IClient } from '../models/Client';
-import Product, { IProduct } from '../models/Product';
+import prisma from '../config/database';
+import { IIdentificationType } from '../models/IdentificationType';
+import { IIssuingCompany } from '../models/IssuingCompany';
+import { IClient } from '../models/Client';
+import { IProduct } from '../models/Product';
+import { IInvoice } from '../models/Invoice';
+import { IInvoiceDetail } from '../models/InvoiceDetail';
 import fs from 'fs';
 import { decrypt } from '../utils/encryption.utils';
 import path from 'path';
@@ -36,14 +36,18 @@ export class InvoiceService {
    * Genera el siguiente secuencial para una empresa
    */
   static async generarSecuencial(rucCompany: string): Promise<string> {
-    const empresa = await IssuingCompany.findOne({ ruc: rucCompany });
+    const empresa = await prisma.issuingCompany.findUnique({
+      where: { ruc: rucCompany },
+    });
+    
     if (!empresa) {
       throw new Error(`Empresa with RUC ${rucCompany} not found`);
     }
 
-    const ultimaFactura = await Invoice.findOne({
-      empresa_emisora_id: empresa._id,
-    }).sort({ secuencial: -1 });
+    const ultimaFactura = await prisma.invoice.findFirst({
+      where: { issuingCompanyId: empresa.id },
+      orderBy: { secuencial: 'desc' },
+    });
 
     let secuencial = '000000001';
     if (ultimaFactura) {
@@ -57,7 +61,9 @@ export class InvoiceService {
    * Busca un tipo de identificación por su código
    */
   static async buscarTipoIdentificacion(codigo: string): Promise<IIdentificationType | null> {
-    const tipoIdent = await IdentificationType.findOne({ codigo });
+    const tipoIdent = await prisma.identificationType.findUnique({
+      where: { codigo },
+    });
     return tipoIdent;
   }
 
@@ -67,13 +73,16 @@ export class InvoiceService {
   static async buscarIssuingCompany(
     ruc: string,
   ): Promise<(IIssuingCompany & { certificatePath?: string; certificatePassword?: string }) | null> {
-    const empresa = await IssuingCompany.findOne({ ruc });
+    const empresa = await prisma.issuingCompany.findUnique({
+      where: { ruc },
+    });
+    
     if (!empresa) return null;
 
     let certificatePath: string | undefined;
     let certificatePassword: string | undefined;
 
-    if (empresa.certificate && empresa.certificate_password) {
+    if (empresa.certificate && empresa.certificatePassword) {
       try {
         if (!empresa.certificate.trim()) {
           throw new Error('El certificado está vacío');
@@ -91,21 +100,21 @@ export class InvoiceService {
           fs.writeFileSync(p12Path, certBuffer);
 
           try {
-            if (empresa.certificate_password && empresa.certificate_password.includes(':')) {
+            if (empresa.certificatePassword && empresa.certificatePassword.includes(':')) {
               try {
-                certificatePassword = decrypt(empresa.certificate_password);
+                certificatePassword = decrypt(empresa.certificatePassword);
               } catch (decryptError: any) {
-                certificatePassword = empresa.certificate_password;
+                certificatePassword = empresa.certificatePassword;
               }
             } else {
-              certificatePassword = empresa.certificate_password;
+              certificatePassword = empresa.certificatePassword;
             }
 
             if (!certificatePassword || certificatePassword.trim() === '') {
               certificatePassword = '';
             }
           } catch (passError) {
-            certificatePassword = empresa.certificate_password || '';
+            certificatePassword = empresa.certificatePassword || '';
           }
 
           certificatePath = p12Path;
@@ -129,7 +138,7 @@ export class InvoiceService {
     }
 
     return {
-      ...(empresa.toObject() as any),
+      ...empresa,
       certificatePath,
       certificatePassword,
     } as any;
@@ -139,7 +148,9 @@ export class InvoiceService {
    * Busca un cliente por su identificación
    */
   static async buscarClient(identificacion: string): Promise<IClient | null> {
-    const cliente = await Client.findOne({ identificacion });
+    const cliente = await prisma.client.findUnique({
+      where: { identificacion },
+    });
     return cliente;
   }
 
@@ -147,7 +158,9 @@ export class InvoiceService {
    * Busca un producto por su código
    */
   static async buscarProduct(codigo: string): Promise<IProduct | null> {
-    const producto = await Product.findOne({ codigo });
+    const producto = await prisma.product.findUnique({
+      where: { codigo },
+    });
     return producto;
   }
 
@@ -171,42 +184,44 @@ export class InvoiceService {
    * Crea una nueva factura en la base de datos
    */
   static async crearFactura(datos: CreateInvoiceDTO) {
-    const factura = new Invoice({
-      empresa_emisora_id: datos.empresaId,
-      cliente_id: datos.clienteId,
-      fecha_emision: datos.fechaEmision,
-      clave_acceso: datos.claveAcceso,
-      secuencial: datos.secuencial,
-      estado: 'CREADA',
-      total_sin_impuestos: datos.totalSinImpuestos,
-      total_iva: datos.totalIva,
-      total_con_impuestos: datos.totalConImpuestos,
+    const factura = await prisma.invoice.create({
+      data: {
+        issuingCompanyId: datos.empresaId,
+        clientId: datos.clienteId,
+        fechaEmision: datos.fechaEmision,
+        claveAcceso: datos.claveAcceso,
+        secuencial: datos.secuencial,
+        estado: 'CREADA',
+        totalSinImpuestos: datos.totalSinImpuestos,
+        totalIva: datos.totalIva,
+        totalConImpuestos: datos.totalConImpuestos,
+      },
     });
 
-    await factura.save();
     return factura;
   }
 
   /**
    * Crea los detalles de una factura en la base de datos
    */
-  static async crearDetallesInvoice(facturaId: string | any, detalles: ProductDetail[], products: IProduct[]) {
+  static async crearDetallesInvoice(facturaId: number, detalles: ProductDetail[], products: IProduct[]) {
     const detallesGuardados = [];
 
     for (let i = 0; i < detalles.length; i++) {
       const det = detalles[i].detalle;
       const prod = products[i];
 
-      const detDoc = new InvoiceDetail({
-        factura_id: facturaId,
-        producto_id: prod._id,
-        cantidad: parseFloat(det.cantidad),
-        precio_unitario: parseFloat(det.precioUnitario),
-        subtotal: parseFloat(det.precioTotalSinImpuesto),
-        valor_iva: parseFloat(det.impuestos[0].impuesto.valor),
+      const detDoc = await prisma.invoiceDetail.create({
+        data: {
+          invoiceId: facturaId,
+          productId: prod.id,
+          cantidad: parseFloat(det.cantidad),
+          precioUnitario: parseFloat(det.precioUnitario),
+          subtotal: parseFloat(det.precioTotalSinImpuesto),
+          valorIva: parseFloat(det.impuestos[0].impuesto.valor),
+        },
       });
 
-      await detDoc.save();
       detallesGuardados.push(detDoc);
     }
 
@@ -261,16 +276,16 @@ export class InvoiceService {
   static async crearFacturaCompleta(datosFactura: InvoiceRequest) {
     const { empresa, cliente, productos, secuencial, fechaEmision } = await this.procesarFacturaCompleta(datosFactura);
 
-    const serie = `${empresa.codigo_establecimiento}${empresa.punto_emision}`;
+    const serie = `${empresa.codigoEstablecimiento}${empresa.puntoEmision}`;
     const claveAcceso = generarClaveAcceso({
       fecha: fechaEmision,
       tipoComprobante: '01',
       ruc: empresa.ruc,
-      ambiente: empresa.tipo_ambiente.toString(),
+      ambiente: empresa.tipoAmbiente.toString(),
       serie,
       secuencial,
       codigoNumerico: Math.floor(10000000 + Math.random() * 89999999).toString(),
-      tipoEmision: empresa.tipo_emision.toString(),
+      tipoEmision: empresa.tipoEmision.toString(),
     });
 
     const totalSinImpuestos = parseFloat(datosFactura.infoFactura.totalSinImpuestos);
@@ -283,8 +298,8 @@ export class InvoiceService {
     const xml = generarXMLFactura(datosFactura, empresa, cliente, productos, claveAcceso, secuencial);
 
     const facturaCreada = await this.crearFactura({
-      empresaId: empresa._id,
-      clienteId: cliente._id,
+      empresaId: empresa.id,
+      clienteId: cliente.id,
       fechaEmision,
       claveAcceso,
       secuencial,
@@ -293,22 +308,28 @@ export class InvoiceService {
       totalConImpuestos,
     });
 
-    facturaCreada.xml = xml;
-    facturaCreada.sri_estado = 'PENDIENTE';
-    facturaCreada.datos_originales = JSON.stringify(datosFactura);
-    await facturaCreada.save();
+    // Update with XML and SRI status
+    const facturaActualizada = await prisma.invoice.update({
+      where: { id: facturaCreada.id },
+      data: {
+        xml: xml,
+        sriEstado: 'PENDIENTE',
+        datosOriginales: JSON.stringify(datosFactura),
+      },
+    });
 
-    this.procesarEnvioSRI(facturaCreada, empresa, cliente, productos, datosFactura).catch((error) => {
+    // Process SRI sending asynchronously
+    this.procesarEnvioSRI(facturaActualizada, empresa, cliente, productos, datosFactura).catch((error) => {
       console.error('Error in asynchronous SRI sending process:', error);
     });
 
-    const detallesGuardados = await this.crearDetallesInvoice(facturaCreada._id, datosFactura.detalles, productos);
+    const detallesGuardados = await this.crearDetallesInvoice(facturaCreada.id, datosFactura.detalles, productos);
 
     return {
-      factura: facturaCreada,
+      factura: facturaActualizada,
       detalles: detallesGuardados,
-      xml: facturaCreada.xml,
-      xml_firmado: facturaCreada.xml_firmado || null,
+      xml: facturaActualizada.xml,
+      xml_firmado: facturaActualizada.xmlFirmado || null,
       respuesta_sri: null,
     };
   }
@@ -322,7 +343,7 @@ export class InvoiceService {
    * @param datosFactura Los datos originales de la factura
    */
   static async procesarEnvioSRI(
-    factura: any,
+    factura: IInvoice,
     empresa: any,
     cliente: IClient,
     productos: IProduct[],
@@ -367,49 +388,70 @@ export class InvoiceService {
           }
 
           const pemPath = await InvoiceService.convertP12ToPem(p12Path, workingPassword);
-          const xmlFirmado = await firmarXML(factura.xml, pemPath, workingPassword);
+          const xmlFirmado = await firmarXML(factura.xml!, pemPath, workingPassword);
 
-          factura.xml_firmado = xmlFirmado;
-          await factura.save();
+          // Update with signed XML
+          const facturaConFirma = await prisma.invoice.update({
+            where: { id: factura.id },
+            data: { xmlFirmado: xmlFirmado },
+          });
 
-          if (factura.xml_firmado) {
-            factura.sri_fecha_envio = new Date();
-            await factura.save();
+          if (facturaConFirma.xmlFirmado) {
+            // Update send date
+            await prisma.invoice.update({
+              where: { id: factura.id },
+              data: { sriFechaEnvio: new Date() },
+            });
 
-            respuestaSRI = await enviarComprobanteSRI(factura.xml_firmado);
+            respuestaSRI = await enviarComprobanteSRI(facturaConFirma.xmlFirmado);
 
-            factura.sri_fecha_respuesta = new Date();
-            factura.sri_estado = respuestaSRI.estado;
-            if (respuestaSRI.mensajes) {
-              factura.sri_mensajes = respuestaSRI.mensajes;
-            }
-            await factura.save();
+            // Update with SRI response
+            await prisma.invoice.update({
+              where: { id: factura.id },
+              data: {
+                sriFechaRespuesta: new Date(),
+                sriEstado: respuestaSRI.estado,
+                sriMensajes: respuestaSRI.mensajes || {},
+              },
+            });
 
             if (respuestaSRI.estado === 'RECIBIDA') {
               console.log(
-                `✅ FACTURA RECIBIDA POR SRI - ID: ${factura._id}, Clave: ${factura.clave_acceso}, Secuencial: ${factura.secuencial}`,
+                `✅ FACTURA RECIBIDA POR SRI - ID: ${factura.id}, Clave: ${factura.claveAcceso}, Secuencial: ${factura.secuencial}`,
               );
-              await this.generarPDFFactura(factura, empresa, cliente, productos, datosFactura);
+              await this.generarPDFFactura(facturaConFirma, empresa, cliente, productos, datosFactura);
             } else {
-              console.log(`⚠️ SRI Estado: ${respuestaSRI.estado} - Factura ID: ${factura._id}`);
+              console.log(`⚠️ SRI Estado: ${respuestaSRI.estado} - Factura ID: ${factura.id}`);
             }
           }
         } catch (error: any) {
           console.error('Error during certificate conversion or signing:', error.message);
-          factura.sri_estado = 'ERROR_FIRMA';
-          factura.sri_mensajes = { error: error.message };
-          await factura.save();
+          await prisma.invoice.update({
+            where: { id: factura.id },
+            data: {
+              sriEstado: 'ERROR_FIRMA',
+              sriMensajes: { error: error.message },
+            },
+          });
         }
       } else {
-        factura.sri_estado = 'ERROR_FIRMA';
-        factura.sri_mensajes = { mensaje: 'Certificate not found for signing' };
-        await factura.save();
+        await prisma.invoice.update({
+          where: { id: factura.id },
+          data: {
+            sriEstado: 'ERROR_FIRMA',
+            sriMensajes: { mensaje: 'Certificate not found for signing' },
+          },
+        });
       }
     } catch (error: any) {
       console.error('Error during signing or sending to SRI:', error.message);
-      factura.sri_estado = 'ERROR_PROCESO';
-      factura.sri_mensajes = { error: error.message };
-      await factura.save();
+      await prisma.invoice.update({
+        where: { id: factura.id },
+        data: {
+          sriEstado: 'ERROR_PROCESO',
+          sriMensajes: { error: error.message },
+        },
+      });
     }
   }
 
@@ -498,120 +540,73 @@ export class InvoiceService {
       const pemCertificate = forge.pki.certificateToPem(certificate);
       const pemPrivateKey = forge.pki.privateKeyToPem(privateKey);
 
+      const pemContent = `${pemPrivateKey}\n${pemCertificate}`;
       const tempDir = os.tmpdir();
-      const certPath = path.join(tempDir, `cert-${Date.now()}.pem`);
-      const keyPath = path.join(tempDir, `key-${Date.now()}.pem`);
+      const pemPath = path.join(tempDir, `cert-${Date.now()}.pem`);
 
-      fs.writeFileSync(certPath, pemCertificate);
-      fs.writeFileSync(keyPath, pemPrivateKey);
-
-      const certContent = fs.readFileSync(certPath, 'utf8');
-      const keyContent = fs.readFileSync(keyPath, 'utf8');
-
-      const combinedPemPath = path.join(tempDir, `combined-${Date.now()}.pem`);
-
-      const formattedCert = certContent.trim();
-      const formattedKey = keyContent.trim();
-
-      const combinedContent = `${formattedKey}\n\n${formattedCert}`;
-
-      fs.writeFileSync(combinedPemPath, combinedContent);
-
-      return combinedPemPath;
-    } catch (error) {
-      if (error instanceof Error) {
-        if (error.message.includes('MAC could not be verified')) {
-          throw new Error(
-            `Error de contraseña del certificado P12: La contraseña proporcionada es incorrecta. Verifique la contraseña del certificado digital.`,
-          );
-        } else if (error.message.includes('Invalid password')) {
-          throw new Error(
-            `Error de contraseña del certificado P12: Contraseña inválida. Verifique que la contraseña del certificado sea correcta.`,
-          );
-        } else if (error.message.includes('PKCS#12')) {
-          throw new Error(
-            `Error en el certificado P12: ${error.message}. Verifique que el archivo del certificado sea válido.`,
-          );
-        }
-      }
-
-      throw new Error(`Error en conversión P12 a PEM: ${(error as Error).message}`);
+      fs.writeFileSync(pemPath, pemContent);
+      return pemPath;
+    } catch (error: any) {
+      throw new Error('Error converting P12 to PEM: ' + error.message);
     }
   }
 
   /**
-   * Generates and saves PDF when invoice is approved by SRI
-   * @param factura The approved invoice
-   * @param empresa The issuing company
-   * @param cliente The client
-   * @param productos The products
-   * @param datosFactura Original invoice data
+   * Genera y guarda el PDF de la factura
    */
   static async generarPDFFactura(
-    factura: any,
+    factura: IInvoice,
     empresa: IIssuingCompany,
     cliente: IClient,
     productos: IProduct[],
     datosFactura: InvoiceRequest,
   ): Promise<void> {
     try {
-      const numeroAutorizacion = factura.clave_acceso;
-      const fechaAutorizacion = factura.sri_fecha_respuesta || new Date();
+      console.log(`📄 Generando PDF para factura ${factura.id}...`);
 
+      // Create PDF data structure matching the expected format
       const pdfData = {
         factura: datosFactura,
         empresa,
         cliente,
         productos,
-        claveAcceso: factura.clave_acceso,
+        claveAcceso: factura.claveAcceso,
         secuencial: factura.secuencial,
-        fechaEmision: factura.fecha_emision,
-        numeroAutorizacion,
-        fechaAutorizacion,
+        fechaEmision: factura.fechaEmision,
+        numeroAutorizacion: factura.claveAcceso,
+        fechaAutorizacion: factura.sriFechaRespuesta || new Date(),
       };
 
       const pdfBuffer = await generateInvoicePDF(pdfData);
-      const filename = `factura_${factura.secuencial}_${factura.clave_acceso}`;
-      const pdfPath = await savePDFToFile(pdfBuffer, filename);
 
-      const invoicePDF = new InvoicePDF({
-        factura_id: factura._id,
-        claveAcceso: factura.clave_acceso,
-        pdf_path: pdfPath,
-        pdf_buffer: pdfBuffer,
-        tamano_archivo: pdfBuffer.length,
-        numero_autorizacion: numeroAutorizacion,
-        fecha_autorizacion: fechaAutorizacion,
-        estado: 'GENERADO',
-      });
-
-      await invoicePDF.save();
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-
-      try {
-        const errorPDF = new InvoicePDF({
-          factura_id: factura._id,
-          claveAcceso: factura.clave_acceso,
-          pdf_path: '',
-          tamano_archivo: 0,
-          numero_autorizacion: factura.clave_acceso,
-          fecha_autorizacion: new Date(),
-          estado: 'ERROR',
+      if (pdfBuffer && pdfBuffer.length > 0) {
+        // Save PDF to database
+        await prisma.invoicePDF.create({
+          data: {
+            invoiceId: factura.id,
+            filename: `factura-${factura.claveAcceso}.pdf`,
+            pdfData: pdfBuffer,
+            contentType: 'application/pdf',
+          },
         });
 
-        await errorPDF.save();
-      } catch (dbError) {
-        console.error('Error saving PDF error record:', dbError);
+        // Update invoice with PDF buffer
+        await prisma.invoice.update({
+          where: { id: factura.id },
+          data: { ridePdf: pdfBuffer },
+        });
+
+        console.log(`✅ PDF generado exitosamente para factura ${factura.id}`);
+      } else {
+        console.error(`❌ Error: PDF vacío para factura ${factura.id}`);
       }
+    } catch (error: any) {
+      console.error('Error generating PDF:', error.message);
     }
   }
 
   /**
-   * Intenta diferentes contraseñas comunes para el certificado P12
-   * @param p12Path Ruta al archivo P12
-   * @param originalPassword Contraseña original a probar primero
-   * @returns Promise con la contraseña correcta o null si ninguna funciona
+   * Busca trabajar con diferentes contraseñas para el certificado P12
    */
   static async findWorkingP12Password(
     p12Path: string,
@@ -622,26 +617,23 @@ export class InvoiceService {
       '',
       'password',
       '123456',
-      'admin',
-      originalPassword?.toLowerCase(),
-      originalPassword?.toUpperCase(),
-    ].filter((pass, index, arr) => pass !== undefined && arr.indexOf(pass) === index);
+      'changeme',
+      originalPassword.toLowerCase(),
+      originalPassword.toUpperCase(),
+    ];
 
-    for (const password of passwordsToTry) {
-      const verification = await this.verifyP12Password(p12Path, password);
-      if (verification.valid) {
-        return { password };
+    for (const testPassword of passwordsToTry) {
+      const result = await this.verifyP12Password(p12Path, testPassword);
+      if (result.valid) {
+        return { password: testPassword };
       }
     }
 
-    return { password: null, error: 'No se encontró una contraseña válida para el certificado P12' };
+    return { password: null, error: 'No working password found' };
   }
 
   /**
-   * Función de diagnóstico para certificados P12
-   * @param p12Path Ruta al archivo P12
-   * @param password Contraseña del certificado
-   * @returns Información de diagnóstico del certificado
+   * Diagnostica un certificado P12
    */
   static async diagnoseP12Certificate(
     p12Path: string,
@@ -654,7 +646,7 @@ export class InvoiceService {
     certificateInfo?: any;
     error?: string;
   }> {
-    const diagnosis: {
+    const result: {
       fileExists: boolean;
       fileSize: number;
       isValidP12: boolean;
@@ -669,55 +661,48 @@ export class InvoiceService {
     };
 
     try {
-      diagnosis.fileExists = fs.existsSync(p12Path);
-      if (!diagnosis.fileExists) {
-        return { ...diagnosis, error: 'El archivo P12 no existe' };
+      result.fileExists = fs.existsSync(p12Path);
+      if (!result.fileExists) {
+        return { ...result, error: 'File does not exist' };
       }
 
       const stats = fs.statSync(p12Path);
-      diagnosis.fileSize = stats.size;
-      if (diagnosis.fileSize === 0) {
-        return { ...diagnosis, error: 'El archivo P12 está vacío' };
+      result.fileSize = stats.size;
+
+      if (result.fileSize === 0) {
+        return { ...result, error: 'File is empty' };
       }
 
-      try {
-        const p12Buffer = fs.readFileSync(p12Path);
-        const p12Base64 = p12Buffer.toString('base64');
-        const p12Der = forge.util.decode64(p12Base64);
-        const p12Asn1 = forge.asn1.fromDer(p12Der);
-        diagnosis.isValidP12 = true;
+      const p12Buffer = fs.readFileSync(p12Path);
+      const p12Base64 = p12Buffer.toString('base64');
+      const p12Der = forge.util.decode64(p12Base64);
+      const p12Asn1 = forge.asn1.fromDer(p12Der);
 
-        try {
-          const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, false, password);
-          diagnosis.passwordWorks = true;
+      result.isValidP12 = true;
 
-          const bags = p12.getBags({ bagType: forge.pki.oids.certBag });
-          const certBags = bags[forge.pki.oids.certBag] || [];
+      const passwordVerification = await this.verifyP12Password(p12Path, password);
+      result.passwordWorks = passwordVerification.valid;
 
-          if (certBags.length > 0) {
-            const cert = certBags[0].cert;
-            if (cert) {
-              diagnosis.certificateInfo = {
-                subject: cert.subject.attributes.map((attr: any) => `${attr.shortName}=${attr.value}`).join(', '),
-                issuer: cert.issuer.attributes.map((attr: any) => `${attr.shortName}=${attr.value}`).join(', '),
-                validFrom: cert.validity.notBefore,
-                validTo: cert.validity.notAfter,
-                serialNumber: cert.serialNumber,
-              };
-            }
-          }
-        } catch (passwordError: any) {
-          diagnosis.passwordWorks = false;
-          return { ...diagnosis, error: `Error de contraseña: ${passwordError.message}` };
+      if (result.passwordWorks) {
+        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, false, password);
+        const bags = p12.getBags({ bagType: forge.pki.oids.certBag });
+        const certBags = bags[forge.pki.oids.certBag] || [];
+
+        if (certBags.length > 0) {
+          const cert = certBags[0].cert;
+          result.certificateInfo = {
+            subject: cert?.subject.attributes.map((attr: any) => `${attr.shortName}=${attr.value}`).join(', '),
+            issuer: cert?.issuer.attributes.map((attr: any) => `${attr.shortName}=${attr.value}`).join(', '),
+            validFrom: cert?.validity.notBefore,
+            validTo: cert?.validity.notAfter,
+            serialNumber: cert?.serialNumber,
+          };
         }
-      } catch (parseError: any) {
-        diagnosis.isValidP12 = false;
-        return { ...diagnosis, error: `Error al parsear P12: ${parseError.message}` };
       }
 
-      return diagnosis;
+      return result;
     } catch (error: any) {
-      return { ...diagnosis, error: `Error general: ${error.message}` };
+      return { ...result, error: error.message };
     }
   }
 }
