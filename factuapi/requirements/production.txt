@@ -1,0 +1,18 @@
+# Include base requirements
+-r base.txt
+
+# Production WSGI server
+gunicorn==21.2.0
+
+# Caching
+django-redis==5.4.0
+
+# Security
+django-csp==3.7
+django-permissions-policy==4.17.0
+
+# Performance monitoring
+django-prometheus==2.3.1
+
+# Production utilities
+whitenoise==6.6.0
