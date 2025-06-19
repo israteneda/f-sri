@@ -1,0 +1,37 @@
+# Include base requirements
+-r base.txt
+
+# WSGI server
+gunicorn==21.2.0
+
+# Database connection pooling
+psycopg2==2.9.9
+
+# Production monitoring
+django-prometheus==2.3.1
+newrelic==9.2.0
+
+# Static files compression
+django-compressor==4.4
+whitenoise==6.6.0
+
+# Security
+django-security==0.18.0
+
+# Email backend for production
+django-ses==3.5.0
+
+# Logging
+django-json-logging==1.15.1
+
+# Performance
+django-cachalot==2.6.1
+
+# Health monitoring
+uwsgitop==0.12
+
+# Memory profiling
+memory-profiler==0.61.0
+
+# Process management
+supervisor==4.2.5

@@ -1,0 +1,1 @@
+# Core app - contains common utilities and base classes
